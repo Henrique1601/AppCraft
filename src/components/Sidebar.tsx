@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   Bookmark,
+  Check,
   CheckCircle2,
   Download,
+  FileCode2,
   FolderPlus,
   HardDrive,
   Layers,
@@ -17,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { AppItem, AppStatus } from "@/types/app";
+import { exportReinstallScript } from "@/lib/reinstall-script";
 
 interface SidebarProps {
   apps: AppItem[];
@@ -53,6 +56,28 @@ export function Sidebar({
 }: SidebarProps) {
   const [addingCat, setAddingCat] = useState(false);
   const [newCatName, setNewCatName] = useState("");
+  const [reinstallFeedback, setReinstallFeedback] = useState<"downloaded" | "empty" | null>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current !== null) {
+        window.clearTimeout(feedbackTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleExportReinstall = () => {
+    const ok = exportReinstallScript(apps);
+    setReinstallFeedback(ok ? "downloaded" : "empty");
+    if (feedbackTimerRef.current !== null) {
+      window.clearTimeout(feedbackTimerRef.current);
+    }
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setReinstallFeedback(null);
+      feedbackTimerRef.current = null;
+    }, 2500);
+  };
 
   const statusCounts = {
     all: apps.length,
@@ -241,6 +266,33 @@ export function Sidebar({
         >
           <TerminalSquare className="h-3.5 w-3.5" />
           Escanear Apps do PC (.ps1)
+        </button>
+
+        <button
+          type="button"
+          onClick={handleExportReinstall}
+          className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors ${
+            reinstallFeedback === "downloaded"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              : reinstallFeedback === "empty"
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                : "border-zinc-800 bg-zinc-900/70 text-zinc-200 hover:bg-zinc-800"
+          }`}
+        >
+          <span className="flex items-center gap-2 truncate">
+            {reinstallFeedback === "downloaded" ? (
+              <Check className="h-3.5 w-3.5 shrink-0" />
+            ) : (
+              <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="truncate">
+              {reinstallFeedback === "downloaded"
+                ? "Baixado!"
+                : reinstallFeedback === "empty"
+                  ? "Sem comandos"
+                  : "Script de Reinstalação (.ps1)"}
+            </span>
+          </span>
         </button>
 
         <div className="grid grid-cols-2 gap-1.5">

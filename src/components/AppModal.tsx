@@ -7,6 +7,8 @@ import {
   Download,
   ExternalLink,
   GitBranch,
+  Loader2,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -46,6 +48,8 @@ export function AppModal({
   const [newStackName, setNewStackName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
+  const [fetchingGithub, setFetchingGithub] = useState(false);
+  const [githubError, setGithubError] = useState<string | null>(null);
 
   const allStackOptions = Array.from(new Set([...availableStacks, ...stacks]));
 
@@ -98,6 +102,41 @@ export function AppModal({
     await navigator.clipboard.writeText(installCommand.trim());
     setCopiedCmd(true);
     setTimeout(() => setCopiedCmd(false), 1500);
+  };
+
+  const handleFetchGithub = async () => {
+    const trimmed = repoUrl.trim();
+    if (!trimmed) return;
+    setFetchingGithub(true);
+    setGithubError(null);
+    try {
+      const res = await fetch(`/api/github?url=${encodeURIComponent(trimmed)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Não foi possível buscar dados do GitHub.");
+      }
+      if (!name.trim() && data.name) setName(String(data.name));
+      if (data.description) setDescription(String(data.description));
+      if (data.websiteUrl) setWebsiteUrl(String(data.websiteUrl));
+      if (data.version) setVersion(String(data.version));
+      if (data.downloadUrl) setDownloadUrl(String(data.downloadUrl));
+      if (Array.isArray(data.tags) && data.tags.length > 0) {
+        const existing = tagsText
+          .split(",")
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
+        const incoming = data.tags
+          .map((t: unknown) => String(t).trim().toLowerCase())
+          .filter(Boolean);
+        setTagsText(Array.from(new Set([...existing, ...incoming])).join(", "));
+      }
+    } catch (err) {
+      setGithubError(
+        err instanceof Error ? err.message : "Erro ao consultar GitHub."
+      );
+    } finally {
+      setFetchingGithub(false);
+    }
   };
 
   return (
@@ -233,13 +272,35 @@ export function AppModal({
                   </a>
                 )}
               </label>
-              <input
-                type="text"
-                value={repoUrl}
-                onChange={(e) => setRepoUrl(e.target.value)}
-                placeholder="https://github.com/usuario/repo"
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none"
-              />
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={repoUrl}
+                  onChange={(e) => {
+                    setRepoUrl(e.target.value);
+                    if (githubError) setGithubError(null);
+                  }}
+                  placeholder="https://github.com/usuario/repo"
+                  className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleFetchGithub}
+                  disabled={!repoUrl.trim() || fetchingGithub}
+                  title="Preencher metadados automaticamente do GitHub"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-2 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-500/20 disabled:opacity-40"
+                >
+                  {fetchingGithub ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  <span className="hidden sm:inline">Puxar do GitHub</span>
+                </button>
+              </div>
+              {githubError && (
+                <p className="mt-1 text-[11px] text-rose-400">{githubError}</p>
+              )}
             </div>
           </div>
 

@@ -23,10 +23,12 @@ interface CloudSyncModalProps {
   categories: string[];
   onApplyCloudData: (apps: AppItem[], categories: string[]) => void;
   onNotify: (msg: string) => void;
+  onAutoSyncChange?: (enabled: boolean) => void;
 }
 
 const SYNC_KEY_STORAGE = "appcraft:sync-key";
 const LAST_SYNC_STORAGE = "appcraft:last-sync";
+const AUTO_SYNC_STORAGE = "appcraft:auto-sync";
 
 function generateSyncKey(): string {
   const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -64,9 +66,11 @@ export function CloudSyncModal({
   categories,
   onApplyCloudData,
   onNotify,
+  onAutoSyncChange,
 }: CloudSyncModalProps) {
   const [syncKey, setSyncKey] = useState("");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [autoSync, setAutoSync] = useState(false);
   const [loadingAction, setLoadingAction] = useState<"push" | "pull" | null>(
     null
   );
@@ -80,8 +84,10 @@ export function CloudSyncModal({
       try {
         const savedKey = localStorage.getItem(SYNC_KEY_STORAGE) ?? "";
         const savedSyncAt = localStorage.getItem(LAST_SYNC_STORAGE);
+        const savedAutoSync = localStorage.getItem(AUTO_SYNC_STORAGE) === "true";
         setSyncKey(savedKey);
         setLastSyncAt(savedSyncAt);
+        setAutoSync(savedAutoSync && savedKey.trim().length >= 4);
       } catch {
         // Ignore storage access errors
       }
@@ -263,6 +269,24 @@ export function CloudSyncModal({
     }
   };
 
+  const handleToggleAutoSync = () => {
+    if (!autoSync && syncKey.trim().length < 4) {
+      setErrorMsg("Defina uma Sync Key (mínimo 4 caracteres) para ativar o Auto-Sync.");
+      return;
+    }
+
+    const next = !autoSync;
+    setAutoSync(next);
+    try {
+      localStorage.setItem(AUTO_SYNC_STORAGE, next ? "true" : "false");
+    } catch {
+      // Ignore storage errors
+    }
+    setErrorMsg(null);
+    onAutoSyncChange?.(next);
+    onNotify(next ? "Auto-Sync ativado." : "Auto-Sync desativado.");
+  };
+
   const isBusy = loadingAction !== null;
 
   return (
@@ -369,6 +393,33 @@ export function CloudSyncModal({
               Use a mesma Sync Key em outro navegador ou computador para
               sincronizar seus dados. Mínimo de 4 caracteres.
             </p>
+          </div>
+
+          <div className="flex items-center justify-between rounded-xl border border-zinc-800/80 bg-zinc-950/60 px-3.5 py-2.5">
+            <div>
+              <p className="font-medium text-zinc-200">Auto-Sync</p>
+              <p className="text-[11px] text-zinc-500">
+                Enviar alterações automaticamente para a nuvem
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoSync}
+              disabled={isBusy || (!autoSync && syncKey.trim().length < 4)}
+              onClick={handleToggleAutoSync}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                autoSync
+                  ? "border-indigo-500/60 bg-indigo-600"
+                  : "border-zinc-700 bg-zinc-800"
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  autoSync ? "translate-x-4" : "translate-x-0.5"
+                }`}
+              />
+            </button>
           </div>
 
           {lastSyncAt && (

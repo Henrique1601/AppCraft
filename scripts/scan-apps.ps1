@@ -11,13 +11,22 @@
 
 param(
     [string]$OutputPath = ".\appcraft-scan.json",
+    [string]$ScanFolder,
     [switch]$IncludeSystemComponents
 )
 
 $ErrorActionPreference = "SilentlyContinue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-Write-Host "🔍 Escaneando aplicativos instalados no Windows..." -ForegroundColor Cyan
+if ($ScanFolder) {
+    if (-not (Test-Path -LiteralPath $ScanFolder -PathType Container)) {
+        Write-Host "❌ Pasta não encontrada: $ScanFolder" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "📁 Escaneando instaladores em: $ScanFolder..." -ForegroundColor Cyan
+} else {
+    Write-Host "🔍 Escaneando aplicativos instalados no Windows..." -ForegroundColor Cyan
+}
 
 $registryPaths = @(
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -204,6 +213,23 @@ function Find-WingetId {
     return $null
 }
 
+function Clean-InstallerName {
+    param([string]$BaseName)
+    if (-not $BaseName) { return "" }
+
+    $n = $BaseName
+    $n = $n -replace "(?i)(?:UserSetup|SystemSetup)$", ""
+    $n = $n -replace "(?i)[-\s_]+v?\d+(?:\.\d+)+.*$", ""
+    $n = $n -replace "(?i)[-\s_\.]+(setup|installer|install|portable|full|offline|web|win64|win32|x64|x86|amd64|arm64|64-?bit|32-?bit)\b", ""
+    $n = $n -replace "(?i)(UserSetup|SystemSetup|Setup|Installer)\b", ""
+    $n = $n -replace "[\._-]+", " "
+    $n = ($n -replace "\s+", " ").Trim()
+    if (-not $n) { $n = $BaseName.Trim() }
+
+    $ti = (Get-Culture).TextInfo
+    return $ti.ToTitleCase($n.ToLower())
+}
+
 function Get-WingetShowDetailsParallel {
     param(
         [string[]]$WingetIds,
@@ -377,91 +403,149 @@ $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
 $wingetExePath = if ($wingetCmd) { $wingetCmd.Source } else { $null }
 $wingetMaps = Get-WingetPackages
 
-$rawEntries = Get-ItemProperty $registryPaths -ErrorAction SilentlyContinue |
-    Where-Object {
-        $_.DisplayName -and
-        $_.DisplayName.Trim() -ne "" -and
-        ($IncludeSystemComponents -or $_.SystemComponent -ne 1)
-    }
-
 $seen = @{}
 $apps = @()
 $appsByWingetId = @{}
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
-foreach ($entry in $rawEntries) {
-    $name = $entry.DisplayName.Trim()
+if ($ScanFolder) {
+    $allowedExtensions = @(".exe", ".msi", ".msix", ".appx", ".zip", ".7z")
+    $installerFiles = Get-ChildItem -LiteralPath $ScanFolder -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $allowedExtensions -contains $_.Extension.ToLower() }
 
-    if (-not $IncludeSystemComponents) {
-        $skip = $false
-        foreach ($pattern in $ignorePatterns) {
-            if ($name -match $pattern) {
-                $skip = $true
-                break
+    foreach ($file in $installerFiles) {
+        $name = Clean-InstallerName -BaseName $file.BaseName
+        if (-not $name) { continue }
+
+        $key = $name.ToLower()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        $version = $null
+        if ($file.BaseName -match "v?(\d+(?:\.\d+)+)") {
+            $version = $matches[1]
+        }
+
+        $sizeMB = [Math]::Round($file.Length / 1MB, 2)
+        $notes = "Instalador em: $($file.FullName) ($sizeMB MB)"
+        $category = Infer-Category -Name $name -Publisher ""
+        $slug = ($name.ToLower() -replace "[^a-z0-9]+", "-").Trim("-")
+        if (-not $slug) { $slug = "app-$([guid]::NewGuid().ToString().Substring(0,6))" }
+
+        $wingetId = Find-WingetId -Name $name -Publisher "" -WingetMaps $wingetMaps
+        $installCommand = if ($wingetId) {
+            "winget install --id $wingetId -e --accept-package-agreements --accept-source-agreements"
+        } else {
+            $null
+        }
+
+        $appObj = [ordered]@{
+            id             = $slug
+            name           = $name
+            category       = $category
+            status         = "wishlist"
+            websiteUrl     = $null
+            repoUrl        = $null
+            installCommand = $installCommand
+            description    = $null
+            notes          = $notes
+            version        = $version
+            tags           = @("hd-installer")
+            createdAt      = $now
+            updatedAt      = $now
+        }
+
+        $apps += $appObj
+
+        if ($wingetId) {
+            if (-not $appsByWingetId.ContainsKey($wingetId)) {
+                $appsByWingetId[$wingetId] = New-Object System.Collections.Generic.List[object]
             }
+            $appsByWingetId[$wingetId].Add($appObj)
         }
-        if ($skip) { continue }
     }
-
-    $key = $name.ToLower()
-    if ($seen.ContainsKey($key)) { continue }
-    $seen[$key] = $true
-
-    $publisher = if ($entry.Publisher) { $entry.Publisher.Trim() } else { "" }
-    $version = if ($entry.DisplayVersion) { $entry.DisplayVersion.Trim() } else { $null }
-    $website = if ($entry.URLInfoAbout -and $entry.URLInfoAbout -match "^https?://") {
-        $entry.URLInfoAbout.Trim()
-    } elseif ($entry.HelpLink -and $entry.HelpLink -match "^https?://") {
-        $entry.HelpLink.Trim()
-    } else {
-        $null
-    }
-
-    $category = Infer-Category -Name $name -Publisher $publisher
-    $repoUrl = $null
-    if ($website -and $website -match "github\.com|gitlab\.com") {
-        $repoUrl = $website
-    }
-
-    $slug = ($name.ToLower() -replace "[^a-z0-9]+", "-").Trim("-")
-    if (-not $slug) { $slug = "app-$([guid]::NewGuid().ToString().Substring(0,6))" }
-
-    $tags = @("windows-scan")
-    if ($publisher) {
-        $pubTag = ($publisher.ToLower() -replace "[^a-z0-9]+", "-").Trim("-")
-        if ($pubTag -and $pubTag.Length -le 24) { $tags += $pubTag }
-    }
-
-    $wingetId = Find-WingetId -Name $name -Publisher $publisher -WingetMaps $wingetMaps
-    $installCommand = if ($wingetId) {
-        "winget install --id $wingetId -e --accept-package-agreements --accept-source-agreements"
-    } else {
-        $null
-    }
-
-    $appObj = [ordered]@{
-        id             = $slug
-        name           = $name
-        category       = $category
-        status         = "installed"
-        websiteUrl     = $website
-        repoUrl        = $repoUrl
-        installCommand = $installCommand
-        description    = if ($publisher) { "Publicado por $publisher" } else { $null }
-        notes          = $null
-        version        = $version
-        tags           = $tags
-        createdAt      = $now
-        updatedAt      = $now
-    }
-
-    $apps += $appObj
-
-    if ($wingetId) {
-        if (-not $appsByWingetId.ContainsKey($wingetId)) {
-            $appsByWingetId[$wingetId] = New-Object System.Collections.Generic.List[object]
+} else {
+    $rawEntries = Get-ItemProperty $registryPaths -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.DisplayName -and
+            $_.DisplayName.Trim() -ne "" -and
+            ($IncludeSystemComponents -or $_.SystemComponent -ne 1)
         }
-        $appsByWingetId[$wingetId].Add($appObj)
+
+    foreach ($entry in $rawEntries) {
+        $name = $entry.DisplayName.Trim()
+
+        if (-not $IncludeSystemComponents) {
+            $skip = $false
+            foreach ($pattern in $ignorePatterns) {
+                if ($name -match $pattern) {
+                    $skip = $true
+                    break
+                }
+            }
+            if ($skip) { continue }
+        }
+
+        $key = $name.ToLower()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+
+        $publisher = if ($entry.Publisher) { $entry.Publisher.Trim() } else { "" }
+        $version = if ($entry.DisplayVersion) { $entry.DisplayVersion.Trim() } else { $null }
+        $website = if ($entry.URLInfoAbout -and $entry.URLInfoAbout -match "^https?://") {
+            $entry.URLInfoAbout.Trim()
+        } elseif ($entry.HelpLink -and $entry.HelpLink -match "^https?://") {
+            $entry.HelpLink.Trim()
+        } else {
+            $null
+        }
+
+        $category = Infer-Category -Name $name -Publisher $publisher
+        $repoUrl = $null
+        if ($website -and $website -match "github\.com|gitlab\.com") {
+            $repoUrl = $website
+        }
+
+        $slug = ($name.ToLower() -replace "[^a-z0-9]+", "-").Trim("-")
+        if (-not $slug) { $slug = "app-$([guid]::NewGuid().ToString().Substring(0,6))" }
+
+        $tags = @("windows-scan")
+        if ($publisher) {
+            $pubTag = ($publisher.ToLower() -replace "[^a-z0-9]+", "-").Trim("-")
+            if ($pubTag -and $pubTag.Length -le 24) { $tags += $pubTag }
+        }
+
+        $wingetId = Find-WingetId -Name $name -Publisher $publisher -WingetMaps $wingetMaps
+        $installCommand = if ($wingetId) {
+            "winget install --id $wingetId -e --accept-package-agreements --accept-source-agreements"
+        } else {
+            $null
+        }
+
+        $appObj = [ordered]@{
+            id             = $slug
+            name           = $name
+            category       = $category
+            status         = "installed"
+            websiteUrl     = $website
+            repoUrl        = $repoUrl
+            installCommand = $installCommand
+            description    = if ($publisher) { "Publicado por $publisher" } else { $null }
+            notes          = $null
+            version        = $version
+            tags           = $tags
+            createdAt      = $now
+            updatedAt      = $now
+        }
+
+        $apps += $appObj
+
+        if ($wingetId) {
+            if (-not $appsByWingetId.ContainsKey($wingetId)) {
+                $appsByWingetId[$wingetId] = New-Object System.Collections.Generic.List[object]
+            }
+            $appsByWingetId[$wingetId].Add($appObj)
+        }
     }
 }
 

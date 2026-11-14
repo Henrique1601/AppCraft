@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Menu, Plus, Search, Sparkles } from "lucide-react";
+import { LayoutGrid, List, Menu, Plus, Search, Sparkles, Upload } from "lucide-react";
 import { AppCard } from "@/components/AppCard";
 import { AppModal } from "@/components/AppModal";
+import { AppTable } from "@/components/AppTable";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { CloudSyncModal } from "@/components/CloudSyncModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ScanGuideModal } from "@/components/ScanGuideModal";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SyncStatus } from "@/components/Sidebar";
 import { SEED_APPS } from "@/data/seed";
 import {
   exportCatalogToJson,
@@ -25,6 +26,27 @@ import {
 } from "@/types/app";
 
 type SortMode = "favorites" | "name" | "recent";
+type ViewMode = "grid" | "table";
+
+const INSTALLER_EXTENSIONS = /\.(exe|msi|zip|7z|msix)$/i;
+
+function cleanInstallerName(fileName: string): string {
+  const withoutExt = fileName.replace(/\.[^.]+$/, "");
+  const cleaned = withoutExt
+    .replace(/[-_]+/g, " ")
+    .replace(/\b(setup|installer|install|x64|x86|amd64|win64|win32|portable)\b/gi, " ")
+    .replace(/\bv?\d+(?:\.\d+){1,3}\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || withoutExt;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 export default function HomePage() {
   const [apps, setApps] = useState<AppItem[]>(SEED_APPS);
@@ -36,12 +58,16 @@ export default function HomePage() {
   const [selectedStack, setSelectedStack] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("favorites");
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [scanGuideOpen, setScanGuideOpen] = useState(false);
   const [cloudSyncOpen, setCloudSyncOpen] = useState(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [modalState, setModalState] = useState<{
     open: boolean;
     app: AppItem | null;
@@ -49,6 +75,7 @@ export default function HomePage() {
   const [toast, setToast] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const skipNextAutoSyncRef = useRef(true);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -60,6 +87,7 @@ export default function HomePage() {
       const { apps: storedApps, categories: storedCats } = loadCatalog();
       setApps(storedApps);
       setCategories(storedCats);
+      setAutoSyncEnabled(localStorage.getItem("appcraft:auto-sync") === "true");
       setHydrated(true);
     });
   }, []);
@@ -73,6 +101,46 @@ export default function HomePage() {
     if (!hydrated) return;
     saveCategories(categories);
   }, [categories, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (skipNextAutoSyncRef.current) {
+      skipNextAutoSyncRef.current = false;
+      return;
+    }
+    if (!autoSyncEnabled) return;
+    const syncKey = localStorage.getItem("appcraft:sync-key")?.trim() ?? "";
+    if (syncKey.length < 4) return;
+
+    const timer = window.setTimeout(async () => {
+      setSyncStatus("syncing");
+      try {
+        const res = await fetch("/api/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            syncKey,
+            payload: {
+              version: 1,
+              exportedAt: new Date().toISOString(),
+              categories,
+              apps,
+            },
+          }),
+        });
+        if (!res.ok) throw new Error("Sync failed");
+        const data = await res.json();
+        if (data?.updatedAt) {
+          localStorage.setItem("appcraft:last-sync", String(data.updatedAt));
+        }
+        setSyncStatus("synced");
+      } catch {
+        setSyncStatus("error");
+      }
+    }, 1500);
+
+    return () => window.clearTimeout(timer);
+  }, [apps, categories, hydrated, autoSyncEnabled]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -303,8 +371,74 @@ export default function HomePage() {
     showToast("Catálogo de exemplo restaurado.");
   };
 
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      setIsDraggingFiles(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDraggingFiles(false);
+  };
+
+  const handleDropFiles = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDraggingFiles(false);
+
+    const droppedFiles = Array.from(e.dataTransfer.files).filter((file) =>
+      INSTALLER_EXTENSIONS.test(file.name)
+    );
+    if (droppedFiles.length === 0) {
+      showToast("Nenhum instalador suportado (.exe, .msi, .zip, .7z, .msix).");
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const existingNames = new Set(apps.map((a) => a.name.toLowerCase()));
+    const added: AppItem[] = [];
+
+    for (const file of droppedFiles) {
+      const appName = cleanInstallerName(file.name);
+      if (existingNames.has(appName.toLowerCase())) continue;
+      existingNames.add(appName.toLowerCase());
+
+      const slug = appName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+
+      added.push({
+        id: `${slug || "installer"}-${Math.random().toString(36).slice(2, 6)}`,
+        name: appName,
+        category: "Utilitários",
+        status: "installed",
+        tags: ["hd-installer"],
+        notes: `Instalador local: ${file.name} (${formatFileSize(file.size)})`,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    if (added.length === 0) {
+      showToast("Esses instaladores já estão no catálogo.");
+      return;
+    }
+
+    setApps((prev) => [...added, ...prev]);
+    showToast(
+      `${added.length} ${added.length === 1 ? "instalador adicionado" : "instaladores adicionados"} ao catálogo.`
+    );
+  };
+
   return (
-    <div className="flex min-h-screen bg-[#09090b] text-zinc-100">
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDropFiles}
+      className="relative flex min-h-screen bg-[#09090b] text-zinc-100"
+    >
       <input
         ref={fileInputRef}
         type="file"
@@ -320,6 +454,7 @@ export default function HomePage() {
         selectedCategory={selectedCategory}
         selectedStatus={selectedStatus}
         selectedStack={selectedStack}
+        syncStatus={syncStatus}
         onSelectCategory={setSelectedCategory}
         onSelectStatus={setSelectedStatus}
         onSelectStack={setSelectedStack}
@@ -371,6 +506,35 @@ export default function HomePage() {
             </div>
 
             <div className="flex items-center gap-2">
+              <div className="inline-flex rounded-xl border border-zinc-800 bg-[#111114] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("grid")}
+                  title="Visualização em grade"
+                  aria-label="Visualização em grade"
+                  className={`rounded-lg p-1.5 transition-colors ${
+                    viewMode === "grid"
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("table")}
+                  title="Visualização em tabela"
+                  aria-label="Visualização em tabela"
+                  className={`rounded-lg p-1.5 transition-colors ${
+                    viewMode === "table"
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  <List className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
               <select
                 value={sortMode}
                 onChange={(e) => setSortMode(e.target.value as SortMode)}
@@ -444,6 +608,15 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+          ) : viewMode === "table" ? (
+            <AppTable
+              apps={filteredApps}
+              onSelect={(item) => setModalState({ open: true, app: item })}
+              onToggleFavorite={handleToggleFavorite}
+              selectedIds={selectedIds}
+              selectionMode={selectedIds.size > 0}
+              onToggleSelect={handleToggleSelect}
+            />
           ) : (
             <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-3">
               {filteredApps.map((app) => (
@@ -492,12 +665,28 @@ export default function HomePage() {
         apps={apps}
         categories={categories}
         onApplyCloudData={(cloudApps, cloudCategories) => {
+          skipNextAutoSyncRef.current = true;
           setApps(cloudApps);
           setCategories(cloudCategories);
           setSelectedIds(new Set());
         }}
+        onAutoSyncChange={setAutoSyncEnabled}
         onNotify={showToast}
       />
+
+      {isDraggingFiles && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-indigo-950/50 backdrop-blur-xs border-2 border-dashed border-indigo-400">
+          <div className="flex flex-col items-center gap-2 rounded-2xl border border-indigo-500/40 bg-[#111114]/95 px-8 py-6 text-center shadow-2xl">
+            <Upload className="h-8 w-8 text-indigo-400" />
+            <p className="text-sm font-semibold text-zinc-100">
+              Solte os instaladores aqui
+            </p>
+            <p className="text-xs text-zinc-400">
+              Suporta .exe, .msi, .zip, .7z e .msix (leitura local sem upload)
+            </p>
+          </div>
+        </div>
+      )}
 
       {paletteOpen && (
         <CommandPalette

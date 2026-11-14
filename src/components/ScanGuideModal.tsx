@@ -12,19 +12,22 @@ interface ScanGuideModalProps {
 const PS_COMMAND =
   "powershell -ExecutionPolicy Bypass -File .\\scripts\\scan-apps.ps1";
 
+const PS_FOLDER_COMMAND =
+  'powershell -ExecutionPolicy Bypass -File .\\scripts\\scan-apps.ps1 -ScanFolder "D:\\Instaladores"';
+
 export function ScanGuideModal({
   open,
   onClose,
   onImportClick,
 }: ScanGuideModalProps) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"standard" | "folder" | null>(null);
 
   if (!open) return null;
 
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(PS_COMMAND);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
+  const handleCopy = async (cmd: string, kind: "standard" | "folder") => {
+    await navigator.clipboard.writeText(cmd);
+    setCopied(kind);
+    setTimeout(() => setCopied(null), 1600);
   };
 
   return (
@@ -76,10 +79,32 @@ export function ScanGuideModal({
               <span className="truncate">{PS_COMMAND}</span>
               <button
                 type="button"
-                onClick={handleCopy}
+                onClick={() => handleCopy(PS_COMMAND, "standard")}
                 className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-zinc-800 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-700"
               >
-                {copied ? (
+                {copied === "standard" ? (
+                  <>
+                    <Check className="h-3 w-3 text-emerald-400" /> Copiado
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3 w-3" /> Copiar
+                  </>
+                )}
+              </button>
+            </div>
+
+            <p className="pt-1 text-[11px] text-zinc-400">
+              Ou escaneie uma pasta/HD com instaladores (.exe, .msi, .zip, .7z):
+            </p>
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 font-mono text-[11px] text-zinc-200">
+              <span className="truncate">{PS_FOLDER_COMMAND}</span>
+              <button
+                type="button"
+                onClick={() => handleCopy(PS_FOLDER_COMMAND, "folder")}
+                className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-zinc-800 px-2 py-1 text-[11px] text-zinc-200 hover:bg-zinc-700"
+              >
+                {copied === "folder" ? (
                   <>
                     <Check className="h-3 w-3 text-emerald-400" /> Copiado
                   </>

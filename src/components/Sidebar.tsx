@@ -10,6 +10,7 @@ import {
   Cloud,
   Download,
   FileCode2,
+  FileText,
   FolderPlus,
   HardDrive,
   Layers,
@@ -21,7 +22,10 @@ import {
   X,
 } from "lucide-react";
 import { AppItem, AppStatus, DEFAULT_STACKS } from "@/types/app";
+import { exportCatalogToMarkdown } from "@/lib/markdown-export";
 import { exportReinstallScript } from "@/lib/reinstall-script";
+
+export type SyncStatus = "idle" | "syncing" | "synced" | "error";
 
 interface SidebarProps {
   apps: AppItem[];
@@ -30,6 +34,7 @@ interface SidebarProps {
   selectedCategory: string;
   selectedStatus: AppStatus | "all";
   selectedStack: string;
+  syncStatus?: SyncStatus;
   onSelectCategory: (cat: string) => void;
   onSelectStatus: (status: AppStatus | "all") => void;
   onSelectStack: (stack: string) => void;
@@ -51,6 +56,7 @@ export function Sidebar({
   selectedCategory,
   selectedStatus,
   selectedStack,
+  syncStatus = "idle",
   onSelectCategory,
   onSelectStatus,
   onSelectStack,
@@ -331,10 +337,29 @@ export function Sidebar({
             onOpenCloudSync();
             onCloseMobile();
           }}
-          className="flex w-full items-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-2 text-xs font-medium text-sky-300 transition-colors hover:bg-sky-500/20"
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-2 text-xs font-medium text-sky-300 transition-colors hover:bg-sky-500/20"
         >
-          <Cloud className="h-3.5 w-3.5" />
-          Sync Nuvem
+          <span className="flex items-center gap-2">
+            <Cloud className="h-3.5 w-3.5" />
+            Sync Nuvem
+          </span>
+          {syncStatus !== "idle" && (
+            <span
+              className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+                syncStatus === "syncing"
+                  ? "bg-sky-500/20 text-sky-200"
+                  : syncStatus === "synced"
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-rose-500/20 text-rose-300"
+              }`}
+            >
+              {syncStatus === "syncing"
+                ? "Sync..."
+                : syncStatus === "synced"
+                  ? "Salvo"
+                  : "Erro"}
+            </span>
+          )}
         </button>
 
         <button
@@ -401,6 +426,15 @@ export function Sidebar({
             Exportar
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => exportCatalogToMarkdown(apps, categories)}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/70 px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-800"
+        >
+          <FileText className="h-3 w-3" />
+          Exportar Markdown (.md)
+        </button>
 
         <button
           type="button"

@@ -204,6 +204,177 @@ function Find-WingetId {
     return $null
 }
 
+function Get-WingetShowDetailsParallel {
+    param(
+        [string[]]$WingetIds,
+        [string]$WingetPath,
+        [int]$MaxThreads = 8,
+        [int]$TimeoutMs = 15000
+    )
+
+    $detailsById = @{}
+    if (-not $WingetIds -or $WingetIds.Count -eq 0 -or -not $WingetPath) {
+        return $detailsById
+    }
+
+    $total = $WingetIds.Count
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    Write-Host "🔎 Enriquecendo $total apps via winget show (até $MaxThreads threads)..." -ForegroundColor Cyan
+
+    $pool = [runspacefactory]::CreateRunspacePool(1, $MaxThreads)
+    $pool.Open()
+
+    $workerScript = {
+        param([string]$PkgId, [string]$ExePath, [int]$CmdTimeoutMs)
+
+        $res = [pscustomobject]@{
+            WingetId    = $PkgId
+            WebsiteUrl  = $null
+            RepoUrl     = $null
+            Description = $null
+        }
+
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $ExePath
+            $psi.Arguments = "show --id `"$PkgId`" --source winget --disable-interactivity --accept-source-agreements"
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+            $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+            $psi.UseShellExecute = $false
+            $psi.CreateNoWindow = $true
+
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+            $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+            if (-not $proc.WaitForExit($CmdTimeoutMs)) {
+                try { $proc.Kill() } catch {}
+                return $res
+            }
+
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $null = $stderrTask.GetAwaiter().GetResult()
+            if (-not $stdout) { return $res }
+
+            $lines = $stdout -split "`r?`n"
+            $homepage = $null
+            $publisherUrl = $null
+            $packageUrl = $null
+            $sourceUrl = $null
+            $descLines = New-Object System.Collections.Generic.List[string]
+            $inDesc = $false
+
+            foreach ($rawLine in $lines) {
+                $line = $rawLine -replace [char]0x00A0, " "
+
+                if ($inDesc) {
+                    if ($line -match "^\s{2,}(.+)$") {
+                        $trimmed = $matches[1].Trim()
+                        if ($trimmed) { $descLines.Add($trimmed) }
+                        continue
+                    } elseif ([string]::IsNullOrWhiteSpace($line)) {
+                        continue
+                    } else {
+                        $inDesc = $false
+                    }
+                }
+
+                if ($line -match "^(?:Homepage|P[áa]gina inicial)\s*:\s*(https?://\S+)") {
+                    if (-not $homepage) { $homepage = $matches[1].Trim() }
+                } elseif ($line -match "^(?:Package\s+Url|URL\s+do\s+Pacote)\s*:\s*(https?://\S+)") {
+                    if (-not $packageUrl) { $packageUrl = $matches[1].Trim() }
+                } elseif ($line -match "^(?:Publisher\s+Url|URL\s+do\s+Fornecedor)\s*:\s*(https?://\S+)") {
+                    if (-not $publisherUrl) { $publisherUrl = $matches[1].Trim() }
+                } elseif ($line -match "^(?:Source\s+Url|Repository|URL\s+(?:da\s+Fonte|do\s+Reposit[óo]rio))\s*:\s*(https?://\S+)") {
+                    if (-not $sourceUrl) { $sourceUrl = $matches[1].Trim() }
+                } elseif ($line -match "^(?:Description|Descri[çc][ãa]o)\s*:\s*(.*)$") {
+                    $inDesc = $true
+                    $first = $matches[1].Trim()
+                    if ($first) { $descLines.Add($first) }
+                }
+            }
+
+            $candidateUrls = @($homepage, $packageUrl, $publisherUrl, $sourceUrl) | Where-Object { $_ }
+            if ($candidateUrls.Count -gt 0) {
+                $res.WebsiteUrl = $candidateUrls[0]
+            }
+
+            $repoCandidates = @($sourceUrl, $homepage, $packageUrl, $publisherUrl) | Where-Object { $_ }
+            foreach ($u in $repoCandidates) {
+                if ($u -match "github\.com|gitlab\.com") {
+                    $res.RepoUrl = $u
+                    break
+                }
+            }
+
+            if ($descLines.Count -gt 0) {
+                $joined = ($descLines -join " ") -replace "\s+", " "
+                $res.Description = $joined.Trim()
+            }
+        } catch {
+        }
+
+        return $res
+    }
+
+    $jobs = New-Object System.Collections.Generic.List[object]
+    foreach ($id in $WingetIds) {
+        $ps = [powershell]::Create()
+        $ps.RunspacePool = $pool
+        $null = $ps.AddScript($workerScript).AddArgument($id).AddArgument($WingetPath).AddArgument($TimeoutMs)
+        $handle = $ps.BeginInvoke()
+        $jobs.Add([pscustomobject]@{
+            Id     = $id
+            PS     = $ps
+            Handle = $handle
+            Done   = $false
+        })
+    }
+
+    $completed = 0
+    $nextLog = [Math]::Min(20, $total)
+
+    while ($completed -lt $total) {
+        $anyCompleted = $false
+        foreach ($job in $jobs) {
+            if (-not $job.Done -and $job.Handle.IsCompleted) {
+                $job.Done = $true
+                $completed++
+                $anyCompleted = $true
+                try {
+                    $output = $job.PS.EndInvoke($job.Handle)
+                    if ($output -and $output.Count -gt 0) {
+                        $detailsById[$job.Id] = $output[0]
+                    }
+                } catch {
+                } finally {
+                    $job.PS.Dispose()
+                }
+            }
+        }
+
+        if ($completed -ge $nextLog -and $completed -lt $total) {
+            Write-Host "   ⏳ $completed/$total apps processados ($([Math]::Round($sw.Elapsed.TotalSeconds, 1))s)..." -ForegroundColor DarkGray
+            $nextLog = [Math]::Min($total, $nextLog + 20)
+        }
+
+        if (-not $anyCompleted) {
+            Start-Sleep -Milliseconds 100
+        }
+    }
+
+    $pool.Close()
+    $pool.Dispose()
+    $sw.Stop()
+    Write-Host "   ✨ Enriquecimento winget concluído em $([Math]::Round($sw.Elapsed.TotalSeconds, 1))s ($completed/$total)." -ForegroundColor DarkCyan
+
+    return $detailsById
+}
+
+$wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+$wingetExePath = if ($wingetCmd) { $wingetCmd.Source } else { $null }
 $wingetMaps = Get-WingetPackages
 
 $rawEntries = Get-ItemProperty $registryPaths -ErrorAction SilentlyContinue |
@@ -215,6 +386,7 @@ $rawEntries = Get-ItemProperty $registryPaths -ErrorAction SilentlyContinue |
 
 $seen = @{}
 $apps = @()
+$appsByWingetId = @{}
 $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
 foreach ($entry in $rawEntries) {
@@ -284,10 +456,45 @@ foreach ($entry in $rawEntries) {
     }
 
     $apps += $appObj
+
+    if ($wingetId) {
+        if (-not $appsByWingetId.ContainsKey($wingetId)) {
+            $appsByWingetId[$wingetId] = New-Object System.Collections.Generic.List[object]
+        }
+        $appsByWingetId[$wingetId].Add($appObj)
+    }
+}
+
+if ($appsByWingetId.Count -gt 0 -and $wingetExePath) {
+    $wingetIdsToEnrich = @($appsByWingetId.Keys)
+    $detailsById = Get-WingetShowDetailsParallel -WingetIds $wingetIdsToEnrich -WingetPath $wingetExePath -MaxThreads 8
+
+    foreach ($pkgId in $wingetIdsToEnrich) {
+        if (-not $detailsById.ContainsKey($pkgId)) { continue }
+        $info = $detailsById[$pkgId]
+        if (-not $info) { continue }
+
+        foreach ($app in $appsByWingetId[$pkgId]) {
+            if ([string]::IsNullOrWhiteSpace($app.websiteUrl) -and $info.WebsiteUrl) {
+                $app.websiteUrl = $info.WebsiteUrl
+            }
+            if ([string]::IsNullOrWhiteSpace($app.repoUrl) -and $info.RepoUrl) {
+                $app.repoUrl = $info.RepoUrl
+            } elseif ([string]::IsNullOrWhiteSpace($app.repoUrl) -and $app.websiteUrl -and $app.websiteUrl -match "github\.com|gitlab\.com") {
+                $app.repoUrl = $app.websiteUrl
+            }
+            if (-not [string]::IsNullOrWhiteSpace($info.Description)) {
+                $app.description = $info.Description
+            }
+        }
+    }
 }
 
 $apps = $apps | Sort-Object { $_.name }
 $wingetMatchedCount = @($apps | Where-Object { $_.installCommand }).Count
+$websiteCount = @($apps | Where-Object { $_.websiteUrl }).Count
+$repoCount = @($apps | Where-Object { $_.repoUrl }).Count
+$richDescCount = @($apps | Where-Object { $_.description -and $_.description -notlike "Publicado por *" }).Count
 
 $export = [ordered]@{
     version    = 1
@@ -300,5 +507,5 @@ $json = $export | ConvertTo-Json -Depth 6
 $resolvedOutput = if ([System.IO.Path]::IsPathRooted($OutputPath)) { $OutputPath } else { Join-Path (Get-Location) $OutputPath }
 [System.IO.File]::WriteAllText($resolvedOutput, $json, [System.Text.UTF8Encoding]::new($false))
 
-Write-Host "✅ $($apps.Count) aplicativos encontrados ($wingetMatchedCount com comando winget) e salvos em: $OutputPath" -ForegroundColor Green
+Write-Host "✅ $($apps.Count) aplicativos encontrados ($wingetMatchedCount com comando winget; $websiteCount com websiteUrl, $repoCount com repoUrl, $richDescCount com descrição detalhada) e salvos em: $OutputPath" -ForegroundColor Green
 Write-Host "👉 Agora abra o AppCraft e clique em 'Importar JSON' para carregar seus apps!" -ForegroundColor Yellow

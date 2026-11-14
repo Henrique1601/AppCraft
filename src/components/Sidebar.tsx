@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   Archive,
   Bookmark,
+  Boxes,
   Check,
   CheckCircle2,
+  Cloud,
   Download,
   FileCode2,
   FolderPlus,
@@ -18,21 +20,25 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { AppItem, AppStatus } from "@/types/app";
+import { AppItem, AppStatus, DEFAULT_STACKS } from "@/types/app";
 import { exportReinstallScript } from "@/lib/reinstall-script";
 
 interface SidebarProps {
   apps: AppItem[];
   categories: string[];
+  stacks?: string[];
   selectedCategory: string;
   selectedStatus: AppStatus | "all";
+  selectedStack: string;
   onSelectCategory: (cat: string) => void;
   onSelectStatus: (status: AppStatus | "all") => void;
+  onSelectStack: (stack: string) => void;
   onAddCategory: (name: string) => void;
   onOpenNewApp: () => void;
   onExportJson: () => void;
   onImportClick: () => void;
   onOpenScanGuide: () => void;
+  onOpenCloudSync: () => void;
   onResetSeed: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -41,15 +47,19 @@ interface SidebarProps {
 export function Sidebar({
   apps,
   categories,
+  stacks = DEFAULT_STACKS,
   selectedCategory,
   selectedStatus,
+  selectedStack,
   onSelectCategory,
   onSelectStatus,
+  onSelectStack,
   onAddCategory,
   onOpenNewApp,
   onExportJson,
   onImportClick,
   onOpenScanGuide,
+  onOpenCloudSync,
   onResetSeed,
   mobileOpen,
   onCloseMobile,
@@ -68,7 +78,10 @@ export function Sidebar({
   }, []);
 
   const handleExportReinstall = () => {
-    const ok = exportReinstallScript(apps);
+    const ok = exportReinstallScript(
+      apps,
+      selectedStack !== "all" ? selectedStack : undefined
+    );
     setReinstallFeedback(ok ? "downloaded" : "empty");
     if (feedbackTimerRef.current !== null) {
       window.clearTimeout(feedbackTimerRef.current);
@@ -78,6 +91,11 @@ export function Sidebar({
       feedbackTimerRef.current = null;
     }, 2500);
   };
+
+  const stackCounts = stacks.reduce<Record<string, number>>((acc, stack) => {
+    acc[stack] = apps.filter((a) => a.stacks?.includes(stack)).length;
+    return acc;
+  }, {});
 
   const statusCounts = {
     all: apps.length,
@@ -181,6 +199,57 @@ export function Sidebar({
           })}
         </div>
 
+        {/* Perfis / Stacks Section */}
+        <div className="space-y-1">
+          <p className="px-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+            Perfis / Stacks
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              onSelectStack("all");
+              onCloseMobile();
+            }}
+            className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+              selectedStack === "all"
+                ? "bg-zinc-800/90 text-zinc-100 font-medium"
+                : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+            }`}
+          >
+            <span className="flex items-center gap-2 truncate">
+              <Boxes className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+              <span className="truncate">Todos os perfis</span>
+            </span>
+            <span className="font-mono text-[11px] text-zinc-500">
+              {apps.length}
+            </span>
+          </button>
+
+          {stacks.map((stack) => {
+            const active = selectedStack === stack;
+            return (
+              <button
+                key={stack}
+                type="button"
+                onClick={() => {
+                  onSelectStack(stack);
+                  onCloseMobile();
+                }}
+                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors ${
+                  active
+                    ? "bg-indigo-500/15 text-indigo-300 font-medium border border-indigo-500/30"
+                    : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                }`}
+              >
+                <span className="truncate">{stack}</span>
+                <span className="font-mono text-[11px] text-zinc-500">
+                  {stackCounts[stack] ?? 0}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Categories Section */}
         <div className="space-y-1">
           <div className="flex items-center justify-between px-2">
@@ -259,6 +328,18 @@ export function Sidebar({
         <button
           type="button"
           onClick={() => {
+            onOpenCloudSync();
+            onCloseMobile();
+          }}
+          className="flex w-full items-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-2 text-xs font-medium text-sky-300 transition-colors hover:bg-sky-500/20"
+        >
+          <Cloud className="h-3.5 w-3.5" />
+          Sync Nuvem
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
             onOpenScanGuide();
             onCloseMobile();
           }}
@@ -271,6 +352,11 @@ export function Sidebar({
         <button
           type="button"
           onClick={handleExportReinstall}
+          title={
+            selectedStack !== "all"
+              ? `Exportar script .ps1 apenas para o stack "${selectedStack}"`
+              : "Exportar script .ps1 de reinstalação"
+          }
           className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors ${
             reinstallFeedback === "downloaded"
               ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
@@ -290,7 +376,9 @@ export function Sidebar({
                 ? "Baixado!"
                 : reinstallFeedback === "empty"
                   ? "Sem comandos"
-                  : "Script de Reinstalação (.ps1)"}
+                  : selectedStack !== "all"
+                    ? `Script: ${selectedStack} (.ps1)`
+                    : "Script de Reinstalação (.ps1)"}
             </span>
           </span>
         </button>

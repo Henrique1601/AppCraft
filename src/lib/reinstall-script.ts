@@ -23,8 +23,26 @@ function escapePsSingleQuoted(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-export function buildReinstallScript(apps: AppItem[], dateStr = getLocalDateStamp()): string | null {
-  const eligible = apps.filter(
+function slugifyStackName(stackName: string): string {
+  return stackName
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function buildReinstallScript(
+  apps: AppItem[],
+  stackName?: string,
+  dateStr = getLocalDateStamp()
+): string | null {
+  const activeStack = stackName && stackName !== "all" ? stackName.trim() : undefined;
+  const scopedApps = activeStack
+    ? apps.filter((app) => app.stacks?.includes(activeStack))
+    : apps;
+
+  const eligible = scopedApps.filter(
     (app): app is AppItem & { status: Exclude<AppStatus, "archived">; installCommand: string } =>
       app.status !== "archived" && Boolean(app.installCommand?.trim())
   );
@@ -53,6 +71,7 @@ export function buildReinstallScript(apps: AppItem[], dateStr = getLocalDateStam
   const lines: string[] = [
     "# ============================================================================",
     "# AppCraft - Script de Reinstalacao (.ps1)",
+    ...(activeStack ? [`# Perfil / Stack: ${activeStack}`] : []),
     `# Gerado em: ${dateStr}`,
     `# Aplicativos incluidos: ${sorted.length} (favoritos e instalados priorizados; arquivados ignorados)`,
     "# Execute no PowerShell (como Administrador quando necessario).",
@@ -87,12 +106,18 @@ export function buildReinstallScript(apps: AppItem[], dateStr = getLocalDateStam
   return lines.join("\r\n");
 }
 
-export function exportReinstallScript(apps: AppItem[]): boolean {
+export function exportReinstallScript(apps: AppItem[], stackName?: string): boolean {
   const dateStr = getLocalDateStamp();
-  const script = buildReinstallScript(apps, dateStr);
+  const activeStack = stackName && stackName !== "all" ? stackName.trim() : undefined;
+  const script = buildReinstallScript(apps, activeStack, dateStr);
   if (!script) {
     return false;
   }
+
+  const stackSlug = activeStack ? slugifyStackName(activeStack) : "";
+  const filename = stackSlug
+    ? `appcraft-reinstall-${stackSlug}-${dateStr}.ps1`
+    : `appcraft-reinstall-${dateStr}.ps1`;
 
   const blob = new Blob(["\uFEFF" + script], {
     type: "text/plain;charset=utf-8",
@@ -100,7 +125,7 @@ export function exportReinstallScript(apps: AppItem[]): boolean {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `appcraft-reinstall-${dateStr}.ps1`;
+  anchor.download = filename;
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);

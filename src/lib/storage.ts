@@ -45,6 +45,10 @@ export function normalizeAppItem(raw: Partial<AppItem> & { name?: string }): App
     ? raw.tags.map((t) => String(t).trim()).filter(Boolean)
     : [];
 
+  const stacks = Array.isArray(raw.stacks)
+    ? Array.from(new Set(raw.stacks.map((s) => String(s).trim()).filter(Boolean)))
+    : [];
+
   return {
     id,
     name,
@@ -74,6 +78,7 @@ export function normalizeAppItem(raw: Partial<AppItem> & { name?: string }): App
         : undefined,
     iconUrl: normalizeUrl(raw.iconUrl),
     tags: Array.from(new Set(tags)),
+    stacks: stacks.length > 0 ? stacks : undefined,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,
   };
@@ -196,6 +201,12 @@ export function parseImportedCatalog(
         repoUrl: incoming.repoUrl || existing.repoUrl,
         installCommand: incoming.installCommand || existing.installCommand,
         tags: Array.from(new Set([...existing.tags, ...incoming.tags])),
+        stacks: (() => {
+          const merged = Array.from(
+            new Set([...(existing.stacks ?? []), ...(incoming.stacks ?? [])])
+          );
+          return merged.length > 0 ? merged : undefined;
+        })(),
         updatedAt: new Date().toISOString(),
       });
       updatedCount++;

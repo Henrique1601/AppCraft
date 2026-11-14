@@ -10,12 +10,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { AppItem, AppStatus, STATUS_CONFIG } from "@/types/app";
+import { AppItem, AppStatus, DEFAULT_STACKS, STATUS_CONFIG } from "@/types/app";
 import { AppIcon } from "./AppIcon";
 
 interface AppModalProps {
   app: AppItem | null; // null = creating new app
   categories: string[];
+  availableStacks?: string[];
   onClose: () => void;
   onSave: (data: Omit<AppItem, "id" | "createdAt" | "updatedAt">, existingId?: string) => void;
   onDelete?: (id: string) => void;
@@ -24,6 +25,7 @@ interface AppModalProps {
 export function AppModal({
   app,
   categories,
+  availableStacks = DEFAULT_STACKS,
   onClose,
   onSave,
   onDelete,
@@ -40,8 +42,27 @@ export function AppModal({
   const [description, setDescription] = useState(app?.description ?? "");
   const [notes, setNotes] = useState(app?.notes ?? "");
   const [tagsText, setTagsText] = useState(app?.tags.join(", ") ?? "");
+  const [stacks, setStacks] = useState<string[]>(app?.stacks ?? []);
+  const [newStackName, setNewStackName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
+
+  const allStackOptions = Array.from(new Set([...availableStacks, ...stacks]));
+
+  const toggleStack = (stack: string) => {
+    setStacks((prev) =>
+      prev.includes(stack) ? prev.filter((s) => s !== stack) : [...prev, stack]
+    );
+  };
+
+  const handleAddStack = () => {
+    const trimmed = newStackName.trim();
+    if (!trimmed) return;
+    if (!stacks.includes(trimmed)) {
+      setStacks((prev) => [...prev, trimmed]);
+    }
+    setNewStackName("");
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,6 +87,7 @@ export function AppModal({
         description: description.trim() || undefined,
         notes: notes.trim() || undefined,
         tags: Array.from(new Set(tags)),
+        stacks: stacks.length > 0 ? stacks : undefined,
       },
       app?.id
     );
@@ -320,6 +342,55 @@ export function AppModal({
                 placeholder="v1.0.0"
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none"
               />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-zinc-300">
+              Perfis / Stacks
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {allStackOptions.map((stack) => {
+                const active = stacks.includes(stack);
+                return (
+                  <button
+                    key={stack}
+                    type="button"
+                    onClick={() => toggleStack(stack)}
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                      active
+                        ? "border-indigo-500/50 bg-indigo-500/15 text-indigo-300"
+                        : "border-zinc-800 bg-zinc-900/70 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                    }`}
+                  >
+                    {active && <Check className="h-3 w-3" />}
+                    {stack}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                value={newStackName}
+                onChange={(e) => setNewStackName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddStack();
+                  }
+                }}
+                placeholder="Adicionar novo stack (ex: Trabalho, Streaming)..."
+                className="flex-1 rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleAddStack}
+                disabled={!newStackName.trim()}
+                className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800 disabled:opacity-40"
+              >
+                Adicionar
+              </button>
             </div>
           </div>
 

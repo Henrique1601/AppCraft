@@ -17,9 +17,19 @@ interface AppCardProps {
   app: AppItem;
   onSelect: (app: AppItem) => void;
   onToggleFavorite: (app: AppItem) => void;
+  selected?: boolean;
+  selectionMode?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
-export function AppCard({ app, onSelect, onToggleFavorite }: AppCardProps) {
+export function AppCard({
+  app,
+  onSelect,
+  onToggleFavorite,
+  selected = false,
+  selectionMode = false,
+  onToggleSelect,
+}: AppCardProps) {
   const [copied, setCopied] = useState(false);
   const statusMeta = STATUS_CONFIG[app.status];
   const isFav = app.status === "favorite";
@@ -36,11 +46,42 @@ export function AppCard({ app, onSelect, onToggleFavorite }: AppCardProps) {
     }
   };
 
+  const handleCardClick = () => {
+    if (selectionMode && onToggleSelect) {
+      onToggleSelect(app.id);
+      return;
+    }
+    onSelect(app);
+  };
+
   return (
     <article
-      onClick={() => onSelect(app)}
-      className="group relative flex cursor-pointer flex-col justify-between rounded-2xl border border-zinc-800/80 bg-[#111114] p-4 transition-all duration-150 hover:border-zinc-700 hover:bg-[#151519] hover:shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+      onClick={handleCardClick}
+      className={`group relative flex cursor-pointer flex-col justify-between rounded-2xl border p-4 transition-all duration-150 ${
+        selected
+          ? "border-indigo-500/70 bg-indigo-950/20 ring-1 ring-indigo-500/30"
+          : "border-zinc-800/80 bg-[#111114] hover:border-zinc-700 hover:bg-[#151519] hover:shadow-[0_0_0_1px_rgba(255,255,255,0.04)]"
+      }`}
     >
+      {onToggleSelect && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect(app.id);
+          }}
+          aria-label={selected ? `Desmarcar ${app.name}` : `Selecionar ${app.name}`}
+          className={`absolute left-2.5 top-2.5 z-10 flex h-5 w-5 items-center justify-center rounded-md border transition-all ${
+            selected
+              ? "border-indigo-500 bg-indigo-600 text-white opacity-100"
+              : selectionMode
+                ? "border-zinc-600 bg-zinc-900/95 text-transparent opacity-100 hover:border-indigo-400"
+                : "border-zinc-700 bg-zinc-900/95 text-transparent opacity-0 group-hover:opacity-100 hover:border-indigo-400"
+          }`}
+        >
+          <Check className="h-3.5 w-3.5" />
+        </button>
+      )}
       <div>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">

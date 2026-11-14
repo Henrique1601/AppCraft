@@ -12,6 +12,7 @@ export interface AppItem {
   description?: string;
   notes?: string;
   tags: string[];
+  stacks?: string[];
   version?: string;
   iconUrl?: string;
   createdAt: string;
@@ -40,6 +41,12 @@ export const DEFAULT_CATEGORIES: string[] = [
   "Segurança & Rede",
   "Navegadores",
   "Jogos & Entretenimento",
+];
+
+export const DEFAULT_STACKS: string[] = [
+  "Pós-Formatação",
+  "Dev Stack",
+  "Mídia & Design",
 ];
 
 export const STATUS_CONFIG: Record<

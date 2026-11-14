@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Menu, Plus, Search, Sparkles } from "lucide-react";
 import { AppCard } from "@/components/AppCard";
 import { AppModal } from "@/components/AppModal";
+import { BulkActionBar } from "@/components/BulkActionBar";
+import { CloudSyncModal } from "@/components/CloudSyncModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ScanGuideModal } from "@/components/ScanGuideModal";
 import { Sidebar } from "@/components/Sidebar";
@@ -15,7 +17,12 @@ import {
   saveApps,
   saveCategories,
 } from "@/lib/storage";
-import { AppItem, AppStatus, DEFAULT_CATEGORIES } from "@/types/app";
+import {
+  AppItem,
+  AppStatus,
+  DEFAULT_CATEGORIES,
+  DEFAULT_STACKS,
+} from "@/types/app";
 
 type SortMode = "favorites" | "name" | "recent";
 
@@ -26,12 +33,15 @@ export default function HomePage() {
 
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<AppStatus | "all">("all");
+  const [selectedStack, setSelectedStack] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("favorites");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [scanGuideOpen, setScanGuideOpen] = useState(false);
+  const [cloudSyncOpen, setCloudSyncOpen] = useState(false);
   const [modalState, setModalState] = useState<{
     open: boolean;
     app: AppItem | null;
@@ -75,6 +85,11 @@ export default function HomePage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const availableStacks = useMemo(() => {
+    const customStacks = apps.flatMap((app) => app.stacks ?? []);
+    return Array.from(new Set([...DEFAULT_STACKS, ...customStacks]));
+  }, [apps]);
+
   const filteredApps = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const list = apps.filter((app) => {
@@ -82,6 +97,9 @@ export default function HomePage() {
         return false;
       }
       if (selectedStatus !== "all" && app.status !== selectedStatus) {
+        return false;
+      }
+      if (selectedStack !== "all" && !app.stacks?.includes(selectedStack)) {
         return false;
       }
       if (!q) return true;
@@ -94,6 +112,7 @@ export default function HomePage() {
         app.websiteUrl ?? "",
         app.repoUrl ?? "",
         ...app.tags,
+        ...(app.stacks ?? []),
       ]
         .join(" ")
         .toLowerCase();
@@ -112,7 +131,7 @@ export default function HomePage() {
       }
       return a.name.localeCompare(b.name);
     });
-  }, [apps, selectedCategory, selectedStatus, searchQuery, sortMode]);
+  }, [apps, selectedCategory, selectedStatus, selectedStack, searchQuery, sortMode]);
 
   const handleSaveApp = (
     data: Omit<AppItem, "id" | "createdAt" | "updatedAt">,
@@ -152,8 +171,83 @@ export default function HomePage() {
   const handleDeleteApp = (id: string) => {
     const target = apps.find((a) => a.id === id);
     setApps((prev) => prev.filter((a) => a.id !== id));
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     setModalState({ open: false, app: null });
     if (target) showToast(`"${target.name}" removido.`);
+  };
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllVisible = () => {
+    setSelectedIds(new Set(filteredApps.map((app) => app.id)));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  const handleBulkMoveCategory = (category: string) => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+    const now = new Date().toISOString();
+    setApps((prev) =>
+      prev.map((app) =>
+        selectedIds.has(app.id) ? { ...app, category, updatedAt: now } : app
+      )
+    );
+    setSelectedIds(new Set());
+    showToast(`${count} ${count === 1 ? "app movido" : "apps movidos"} para "${category}".`);
+  };
+
+  const handleBulkSetStatus = (status: AppStatus) => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+    const now = new Date().toISOString();
+    setApps((prev) =>
+      prev.map((app) =>
+        selectedIds.has(app.id) ? { ...app, status, updatedAt: now } : app
+      )
+    );
+    setSelectedIds(new Set());
+    showToast(`Status atualizado em ${count} ${count === 1 ? "app" : "apps"}.`);
+  };
+
+  const handleBulkAddToStack = (stack: string) => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+    const now = new Date().toISOString();
+    setApps((prev) =>
+      prev.map((app) => {
+        if (!selectedIds.has(app.id)) return app;
+        const nextStacks = Array.from(new Set([...(app.stacks ?? []), stack]));
+        return { ...app, stacks: nextStacks, updatedAt: now };
+      })
+    );
+    setSelectedIds(new Set());
+    showToast(`${count} ${count === 1 ? "app adicionado" : "apps adicionados"} ao stack "${stack}".`);
+  };
+
+  const handleBulkDelete = () => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+    setApps((prev) => prev.filter((app) => !selectedIds.has(app.id)));
+    setSelectedIds(new Set());
+    showToast(`${count} ${count === 1 ? "app removido" : "apps removidos"}.`);
   };
 
   const handleToggleFavorite = (app: AppItem) => {
@@ -203,6 +297,8 @@ export default function HomePage() {
     setCategories(DEFAULT_CATEGORIES);
     setSelectedCategory("all");
     setSelectedStatus("all");
+    setSelectedStack("all");
+    setSelectedIds(new Set());
     setSearchQuery("");
     showToast("Catálogo de exemplo restaurado.");
   };
@@ -220,10 +316,13 @@ export default function HomePage() {
       <Sidebar
         apps={apps}
         categories={categories}
+        stacks={availableStacks}
         selectedCategory={selectedCategory}
         selectedStatus={selectedStatus}
+        selectedStack={selectedStack}
         onSelectCategory={setSelectedCategory}
         onSelectStatus={setSelectedStatus}
+        onSelectStack={setSelectedStack}
         onAddCategory={handleAddCategory}
         onOpenNewApp={() => setModalState({ open: true, app: null })}
         onExportJson={() => {
@@ -232,6 +331,7 @@ export default function HomePage() {
         }}
         onImportClick={() => fileInputRef.current?.click()}
         onOpenScanGuide={() => setScanGuideOpen(true)}
+        onOpenCloudSync={() => setCloudSyncOpen(true)}
         onResetSeed={handleResetSeed}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
@@ -305,7 +405,9 @@ export default function HomePage() {
               <p className="text-xs text-zinc-500">
                 {filteredApps.length}{" "}
                 {filteredApps.length === 1 ? "app exibido" : "apps exibidos"}
-                {selectedStatus !== "all" ? ` · filtro ativo` : ""}
+                {selectedStatus !== "all" || selectedStack !== "all"
+                  ? ` · filtro ativo`
+                  : ""}
               </p>
             </div>
           </div>
@@ -326,6 +428,7 @@ export default function HomePage() {
                   onClick={() => {
                     setSelectedCategory("all");
                     setSelectedStatus("all");
+                    setSelectedStack("all");
                     setSearchQuery("");
                   }}
                   className="rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800"
@@ -349,6 +452,9 @@ export default function HomePage() {
                   app={app}
                   onSelect={(item) => setModalState({ open: true, app: item })}
                   onToggleFavorite={handleToggleFavorite}
+                  selected={selectedIds.has(app.id)}
+                  selectionMode={selectedIds.size > 0}
+                  onToggleSelect={handleToggleSelect}
                 />
               ))}
             </div>
@@ -360,11 +466,38 @@ export default function HomePage() {
         <AppModal
           app={modalState.app}
           categories={categories}
+          availableStacks={availableStacks}
           onClose={() => setModalState({ open: false, app: null })}
           onSave={handleSaveApp}
           onDelete={handleDeleteApp}
         />
       )}
+
+      <BulkActionBar
+        selectedCount={selectedIds.size}
+        totalVisibleCount={filteredApps.length}
+        categories={categories}
+        stacks={availableStacks}
+        onSelectAllVisible={handleSelectAllVisible}
+        onClearSelection={handleClearSelection}
+        onMoveCategory={handleBulkMoveCategory}
+        onSetStatus={handleBulkSetStatus}
+        onAddToStack={handleBulkAddToStack}
+        onDeleteSelected={handleBulkDelete}
+      />
+
+      <CloudSyncModal
+        open={cloudSyncOpen}
+        onClose={() => setCloudSyncOpen(false)}
+        apps={apps}
+        categories={categories}
+        onApplyCloudData={(cloudApps, cloudCategories) => {
+          setApps(cloudApps);
+          setCategories(cloudCategories);
+          setSelectedIds(new Set());
+        }}
+        onNotify={showToast}
+      />
 
       {paletteOpen && (
         <CommandPalette

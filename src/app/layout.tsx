@@ -16,6 +16,11 @@ export const metadata: Metadata = {
   title: "AppCraft — Catálogo Pessoal de Apps",
   description:
     "Organize todos os apps do seu PC por categorias, links oficiais, repositórios, comandos winget e notas pessoais.",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

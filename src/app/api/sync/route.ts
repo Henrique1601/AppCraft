@@ -1,7 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 
-const MIN_SYNC_KEY_LENGTH = 4;
+const MIN_SYNC_KEY_LENGTH = 8;
 const MAX_SYNC_KEY_LENGTH = 128;
 
 function getSql() {

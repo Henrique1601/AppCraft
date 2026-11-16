@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayoutGrid, List, Menu, Plus, Search, Sparkles, Upload } from "lucide-react";
+import { LayoutGrid, List, Menu, Plus, RotateCcw, Search, Sparkles, Upload } from "lucide-react";
 import { AppCard } from "@/components/AppCard";
 import { AppModal } from "@/components/AppModal";
 import { AppTable } from "@/components/AppTable";
 import { BulkActionBar } from "@/components/BulkActionBar";
 import { CloudSyncModal } from "@/components/CloudSyncModal";
 import { CommandPalette } from "@/components/CommandPalette";
+import { DuplicatesModal } from "@/components/DuplicatesModal";
 import { ScanGuideModal } from "@/components/ScanGuideModal";
 import { Sidebar, SyncStatus } from "@/components/Sidebar";
 import { SEED_APPS } from "@/data/seed";
+import { DuplicateGroup, mergeAppGroup } from "@/lib/duplicates";
 import {
   exportCatalogToJson,
   loadCatalog,
@@ -18,6 +20,7 @@ import {
   saveApps,
   saveCategories,
 } from "@/lib/storage";
+import { hashSyncKey } from "@/lib/sync-client";
 import {
   AppItem,
   AppStatus,
@@ -27,6 +30,7 @@ import {
 
 type SortMode = "favorites" | "name" | "recent";
 type ViewMode = "grid" | "table";
+type HealthFilter = "all" | "no-website" | "no-repo" | "no-winget" | "hd-installer";
 
 const INSTALLER_EXTENSIONS = /\.(exe|msi|zip|7z|msix)$/i;
 
@@ -56,6 +60,7 @@ export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<AppStatus | "all">("all");
   const [selectedStack, setSelectedStack] = useState<string>("all");
+  const [healthFilter, setHealthFilter] = useState<HealthFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("favorites");
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
@@ -65,6 +70,7 @@ export default function HomePage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [scanGuideOpen, setScanGuideOpen] = useState(false);
   const [cloudSyncOpen, setCloudSyncOpen] = useState(false);
+  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -72,14 +78,24 @@ export default function HomePage() {
     open: boolean;
     app: AppItem | null;
   }>({ open: false, app: null });
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    undoApps?: AppItem[];
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const skipNextAutoSyncRef = useRef(true);
+  const toastTimerRef = useRef<number | null>(null);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3200);
+  const showToast = (msg: string, undoApps?: AppItem[]) => {
+    setToast({ message: msg, undoApps });
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, undoApps ? 6000 : 3200);
   };
 
   useEffect(() => {
@@ -110,16 +126,17 @@ export default function HomePage() {
     }
     if (!autoSyncEnabled) return;
     const syncKey = localStorage.getItem("appcraft:sync-key")?.trim() ?? "";
-    if (syncKey.length < 4) return;
+    if (syncKey.length < 8) return;
 
     const timer = window.setTimeout(async () => {
       setSyncStatus("syncing");
       try {
+        const hashedKey = await hashSyncKey(syncKey);
         const res = await fetch("/api/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            syncKey,
+            syncKey: hashedKey,
             payload: {
               version: 1,
               exportedAt: new Date().toISOString(),
@@ -158,6 +175,16 @@ export default function HomePage() {
     return Array.from(new Set([...DEFAULT_STACKS, ...customStacks]));
   }, [apps]);
 
+  const healthCounts = useMemo(
+    () => ({
+      "no-website": apps.filter((a) => !a.websiteUrl).length,
+      "no-repo": apps.filter((a) => !a.repoUrl).length,
+      "no-winget": apps.filter((a) => !a.installCommand).length,
+      "hd-installer": apps.filter((a) => a.tags.includes("hd-installer")).length,
+    }),
+    [apps]
+  );
+
   const filteredApps = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const list = apps.filter((app) => {
@@ -168,6 +195,12 @@ export default function HomePage() {
         return false;
       }
       if (selectedStack !== "all" && !app.stacks?.includes(selectedStack)) {
+        return false;
+      }
+      if (healthFilter === "no-website" && app.websiteUrl) return false;
+      if (healthFilter === "no-repo" && app.repoUrl) return false;
+      if (healthFilter === "no-winget" && app.installCommand) return false;
+      if (healthFilter === "hd-installer" && !app.tags.includes("hd-installer")) {
         return false;
       }
       if (!q) return true;
@@ -199,7 +232,15 @@ export default function HomePage() {
       }
       return a.name.localeCompare(b.name);
     });
-  }, [apps, selectedCategory, selectedStatus, selectedStack, searchQuery, sortMode]);
+  }, [
+    apps,
+    selectedCategory,
+    selectedStatus,
+    selectedStack,
+    healthFilter,
+    searchQuery,
+    sortMode,
+  ]);
 
   const handleSaveApp = (
     data: Omit<AppItem, "id" | "createdAt" | "updatedAt">,
@@ -238,6 +279,7 @@ export default function HomePage() {
 
   const handleDeleteApp = (id: string) => {
     const target = apps.find((a) => a.id === id);
+    const snapshot = apps;
     setApps((prev) => prev.filter((a) => a.id !== id));
     setSelectedIds((prev) => {
       if (!prev.has(id)) return prev;
@@ -246,7 +288,7 @@ export default function HomePage() {
       return next;
     });
     setModalState({ open: false, app: null });
-    if (target) showToast(`"${target.name}" removido.`);
+    if (target) showToast(`"${target.name}" removido.`, snapshot);
   };
 
   const handleToggleSelect = (id: string) => {
@@ -313,9 +355,32 @@ export default function HomePage() {
   const handleBulkDelete = () => {
     const count = selectedIds.size;
     if (count === 0) return;
+    const snapshot = apps;
     setApps((prev) => prev.filter((app) => !selectedIds.has(app.id)));
     setSelectedIds(new Set());
-    showToast(`${count} ${count === 1 ? "app removido" : "apps removidos"}.`);
+    showToast(`${count} ${count === 1 ? "app removido" : "apps removidos"}.`, snapshot);
+  };
+
+  const handleMergeDuplicateGroup = (group: DuplicateGroup) => {
+    const snapshot = apps;
+    const merged = mergeAppGroup(group.apps);
+    const removeIds = new Set(group.apps.map((a) => a.id));
+    setApps((prev) => [merged, ...prev.filter((a) => !removeIds.has(a.id))]);
+    showToast(`"${merged.name}" mesclado (${group.apps.length} itens).`, snapshot);
+  };
+
+  const handleMergeAllDuplicates = (groups: DuplicateGroup[]) => {
+    if (groups.length === 0) return;
+    const snapshot = apps;
+    const removeIds = new Set<string>();
+    const mergedItems: AppItem[] = [];
+    for (const group of groups) {
+      mergedItems.push(mergeAppGroup(group.apps));
+      for (const item of group.apps) removeIds.add(item.id);
+    }
+    setApps((prev) => [...mergedItems, ...prev.filter((a) => !removeIds.has(a.id))]);
+    setDuplicatesOpen(false);
+    showToast(`${groups.length} grupos de duplicados mesclados.`, snapshot);
   };
 
   const handleToggleFavorite = (app: AppItem) => {
@@ -467,6 +532,7 @@ export default function HomePage() {
         onImportClick={() => fileInputRef.current?.click()}
         onOpenScanGuide={() => setScanGuideOpen(true)}
         onOpenCloudSync={() => setCloudSyncOpen(true)}
+        onOpenDuplicates={() => setDuplicatesOpen(true)}
         onResetSeed={handleResetSeed}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
@@ -559,20 +625,55 @@ export default function HomePage() {
 
         {/* Content */}
         <div className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
-          <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
-            <div>
-              <h2 className="text-lg font-semibold tracking-tight text-zinc-100">
-                {selectedCategory === "all"
-                  ? "Todos os Aplicativos"
-                  : selectedCategory}
-              </h2>
-              <p className="text-xs text-zinc-500">
-                {filteredApps.length}{" "}
-                {filteredApps.length === 1 ? "app exibido" : "apps exibidos"}
-                {selectedStatus !== "all" || selectedStack !== "all"
-                  ? ` · filtro ativo`
-                  : ""}
-              </p>
+          <div className="mb-5 flex flex-col gap-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight text-zinc-100">
+                  {selectedCategory === "all"
+                    ? "Todos os Aplicativos"
+                    : selectedCategory}
+                </h2>
+                <p className="text-xs text-zinc-500">
+                  {filteredApps.length}{" "}
+                  {filteredApps.length === 1 ? "app exibido" : "apps exibidos"}
+                  {selectedStatus !== "all" ||
+                  selectedStack !== "all" ||
+                  healthFilter !== "all"
+                    ? ` · filtro ativo`
+                    : ""}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                [
+                  { id: "all" as const, label: "Tudo", count: apps.length },
+                  { id: "no-website" as const, label: "Sem Site", count: healthCounts["no-website"] },
+                  { id: "no-repo" as const, label: "Sem Repo", count: healthCounts["no-repo"] },
+                  { id: "no-winget" as const, label: "Sem Winget", count: healthCounts["no-winget"] },
+                  { id: "hd-installer" as const, label: "Instaladores HD", count: healthCounts["hd-installer"] },
+                ] as const
+              ).map((chip) => {
+                const active = healthFilter === chip.id;
+                return (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => setHealthFilter(chip.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      active
+                        ? "border-indigo-500/40 bg-indigo-500/15 text-indigo-300"
+                        : "border-zinc-800 bg-[#111114] text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                    }`}
+                  >
+                    <span>{chip.label}</span>
+                    <span className="font-mono text-[10px] opacity-75">
+                      {chip.count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -593,6 +694,7 @@ export default function HomePage() {
                     setSelectedCategory("all");
                     setSelectedStatus("all");
                     setSelectedStack("all");
+                    setHealthFilter("all");
                     setSearchQuery("");
                   }}
                   className="rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs text-zinc-300 hover:bg-zinc-800"
@@ -704,9 +806,30 @@ export default function HomePage() {
         onImportClick={() => fileInputRef.current?.click()}
       />
 
+      <DuplicatesModal
+        open={duplicatesOpen}
+        apps={apps}
+        onClose={() => setDuplicatesOpen(false)}
+        onMergeGroup={handleMergeDuplicateGroup}
+        onMergeAll={handleMergeAllDuplicates}
+      />
+
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 rounded-xl border border-zinc-700 bg-zinc-900/95 px-4 py-2.5 text-xs font-medium text-zinc-100 shadow-xl backdrop-blur-md">
-          {toast}
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900/95 px-4 py-2.5 text-xs font-medium text-zinc-100 shadow-xl backdrop-blur-md">
+          <span>{toast.message}</span>
+          {toast.undoApps && (
+            <button
+              type="button"
+              onClick={() => {
+                setApps(toast.undoApps!);
+                setToast(null);
+              }}
+              className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-indigo-500"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Desfazer
+            </button>
+          )}
         </div>
       )}
     </div>

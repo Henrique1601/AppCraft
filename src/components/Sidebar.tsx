@@ -12,6 +12,7 @@ import {
   FileCode2,
   FileText,
   FolderPlus,
+  GitMerge,
   HardDrive,
   Layers,
   Plus,
@@ -22,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { AppItem, AppStatus, DEFAULT_STACKS } from "@/types/app";
+import { findDuplicateGroups } from "@/lib/duplicates";
 import { exportCatalogToMarkdown } from "@/lib/markdown-export";
 import { exportReinstallScript } from "@/lib/reinstall-script";
 
@@ -44,6 +46,7 @@ interface SidebarProps {
   onImportClick: () => void;
   onOpenScanGuide: () => void;
   onOpenCloudSync: () => void;
+  onOpenDuplicates?: () => void;
   onResetSeed: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -66,6 +69,7 @@ export function Sidebar({
   onImportClick,
   onOpenScanGuide,
   onOpenCloudSync,
+  onOpenDuplicates,
   onResetSeed,
   mobileOpen,
   onCloseMobile,
@@ -74,6 +78,7 @@ export function Sidebar({
   const [newCatName, setNewCatName] = useState("");
   const [reinstallFeedback, setReinstallFeedback] = useState<"downloaded" | "empty" | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
+  const duplicateCount = findDuplicateGroups(apps).length;
 
   useEffect(() => {
     return () => {
@@ -435,6 +440,27 @@ export function Sidebar({
           <FileText className="h-3 w-3" />
           Exportar Markdown (.md)
         </button>
+
+        {onOpenDuplicates && (
+          <button
+            type="button"
+            onClick={() => {
+              onOpenDuplicates();
+              onCloseMobile();
+            }}
+            className="flex w-full items-center justify-between gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/70 px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-800"
+          >
+            <span className="flex items-center gap-1.5">
+              <GitMerge className="h-3 w-3" />
+              Verificar Duplicados
+            </span>
+            {duplicateCount > 0 && (
+              <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
+                {duplicateCount}
+              </span>
+            )}
+          </button>
+        )}
 
         <button
           type="button"

@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { AppItem } from "@/types/app";
+import { hashSyncKey, RECOMMENDED_SYNC_KEY_LENGTH } from "@/lib/sync-client";
 
 interface CloudSyncModalProps {
   open: boolean;
@@ -128,8 +129,10 @@ export function CloudSyncModal({
 
   const validateKey = (): string | null => {
     const trimmed = syncKey.trim();
-    if (trimmed.length < 4) {
-      setErrorMsg("Informe uma Sync Key com pelo menos 4 caracteres.");
+    if (trimmed.length < RECOMMENDED_SYNC_KEY_LENGTH) {
+      setErrorMsg(
+        `Informe uma Sync Key com pelo menos ${RECOMMENDED_SYNC_KEY_LENGTH} caracteres para proteger seu catálogo.`
+      );
       return null;
     }
     return trimmed;
@@ -165,11 +168,12 @@ export function CloudSyncModal({
     setStatusMsg(null);
 
     try {
+      const hashedKey = await hashSyncKey(trimmed);
       const response = await fetch("/api/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          syncKey: trimmed,
+          syncKey: hashedKey,
           payload: {
             version: 1,
             syncedAt: new Date().toISOString(),
@@ -215,8 +219,9 @@ export function CloudSyncModal({
     setStatusMsg(null);
 
     try {
+      const hashedKey = await hashSyncKey(trimmed);
       const response = await fetch(
-        `/api/sync?key=${encodeURIComponent(trimmed)}`,
+        `/api/sync?key=${encodeURIComponent(hashedKey)}`,
         { cache: "no-store" }
       );
 

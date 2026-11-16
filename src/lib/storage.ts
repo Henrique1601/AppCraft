@@ -23,7 +23,7 @@ function safeStatus(status: unknown): AppStatus {
   return "installed";
 }
 
-function normalizeUrl(url: unknown): string | undefined {
+export function normalizeUrl(url: unknown): string | undefined {
   if (typeof url !== "string") return undefined;
   const trimmed = url.trim();
   if (!trimmed) return undefined;

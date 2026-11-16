@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Copy, Download, TerminalSquare, Upload, X } from "lucide-react";
 
 interface ScanGuideModalProps {
@@ -21,6 +21,15 @@ export function ScanGuideModal({
   onImportClick,
 }: ScanGuideModalProps) {
   const [copied, setCopied] = useState<"standard" | "folder" | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
 
   if (!open) return null;
 

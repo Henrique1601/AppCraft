@@ -76,6 +76,7 @@ export function Sidebar({
 }: SidebarProps) {
   const [addingCat, setAddingCat] = useState(false);
   const [newCatName, setNewCatName] = useState("");
+  const [confirmReset, setConfirmReset] = useState(false);
   const [reinstallFeedback, setReinstallFeedback] = useState<"downloaded" | "empty" | null>(null);
   const feedbackTimerRef = useRef<number | null>(null);
   const duplicateCount = findDuplicateGroups(apps).length;
@@ -462,14 +463,39 @@ export function Sidebar({
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={onResetSeed}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-300"
-        >
-          <RotateCcw className="h-3 w-3" />
-          Restaurar catálogo exemplo
-        </button>
+        {confirmReset ? (
+          <div className="flex items-center justify-between gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px]">
+            <span className="text-amber-200">Restaurar?</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmReset(false);
+                  onResetSeed();
+                }}
+                className="rounded bg-amber-500 px-2 py-0.5 font-medium text-zinc-950 hover:bg-amber-400"
+              >
+                Sim
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmReset(false)}
+                className="rounded px-1.5 py-0.5 text-zinc-400 hover:text-zinc-200"
+              >
+                Não
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmReset(true)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-300"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Restaurar catálogo exemplo
+          </button>
+        )}
       </div>
     </div>
   );

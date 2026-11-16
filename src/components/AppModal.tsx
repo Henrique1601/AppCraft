@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   Copy,
@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { normalizeUrl } from "@/lib/storage";
 import { AppItem, AppStatus, DEFAULT_STACKS, STATUS_CONFIG } from "@/types/app";
 import { AppIcon } from "./AppIcon";
 
@@ -51,6 +52,16 @@ export function AppModal({
   const [fetchingGithub, setFetchingGithub] = useState(false);
   const [githubError, setGithubError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   const allStackOptions = Array.from(new Set([...availableStacks, ...stacks]));
 
   const toggleStack = (stack: string) => {
@@ -82,12 +93,12 @@ export function AppModal({
         name: name.trim(),
         category: category.trim() || "Utilitários",
         status,
-        websiteUrl: websiteUrl.trim() || undefined,
-        repoUrl: repoUrl.trim() || undefined,
-        downloadUrl: downloadUrl.trim() || undefined,
+        websiteUrl: normalizeUrl(websiteUrl),
+        repoUrl: normalizeUrl(repoUrl),
+        downloadUrl: normalizeUrl(downloadUrl),
         installCommand: installCommand.trim() || undefined,
         version: version.trim() || undefined,
-        iconUrl: iconUrl.trim() || undefined,
+        iconUrl: normalizeUrl(iconUrl),
         description: description.trim() || undefined,
         notes: notes.trim() || undefined,
         tags: Array.from(new Set(tags)),

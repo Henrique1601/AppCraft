@@ -164,11 +164,21 @@ export default function HomePage() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((prev) => !prev);
+      } else if (
+        e.key === "Escape" &&
+        !paletteOpen &&
+        !modalState.open &&
+        !cloudSyncOpen &&
+        !scanGuideOpen &&
+        !duplicatesOpen &&
+        selectedIds.size > 0
+      ) {
+        setSelectedIds(new Set());
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [paletteOpen, modalState.open, cloudSyncOpen, scanGuideOpen, duplicatesOpen, selectedIds.size]);
 
   const availableStacks = useMemo(() => {
     const customStacks = apps.flatMap((app) => app.stacks ?? []);
@@ -426,14 +436,16 @@ export default function HomePage() {
   };
 
   const handleResetSeed = () => {
+    const snapshot = apps;
     setApps(SEED_APPS);
     setCategories(DEFAULT_CATEGORIES);
     setSelectedCategory("all");
     setSelectedStatus("all");
     setSelectedStack("all");
+    setHealthFilter("all");
     setSelectedIds(new Set());
     setSearchQuery("");
-    showToast("Catálogo de exemplo restaurado.");
+    showToast("Catálogo de exemplo restaurado.", snapshot);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {

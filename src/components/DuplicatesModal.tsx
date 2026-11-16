@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { CheckCircle2, GitMerge, Sparkles, X } from "lucide-react";
 import { DuplicateGroup, findDuplicateGroups } from "@/lib/duplicates";
 import { AppItem, STATUS_CONFIG } from "@/types/app";
@@ -22,6 +22,15 @@ export function DuplicatesModal({
   onMergeAll,
 }: DuplicatesModalProps) {
   const groups = useMemo(() => findDuplicateGroups(apps), [apps]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
 
   if (!open) return null;
 

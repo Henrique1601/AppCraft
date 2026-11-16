@@ -34,10 +34,16 @@ yarn-error.log*
 .env*
 
 # vercel
+# local scan output
+appcraft-scan.json
+
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local scan output
+appcraft-scan.json
 
 .vercel

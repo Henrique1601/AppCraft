@@ -1,6 +1,17 @@
 {
   "name": "appcraft",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Catálogo pessoal de aplicativos de PC por categorias, links oficiais, repositórios, comandos winget, scanner Windows e sync na nuvem.",
+  "keywords": [
+    "nextjs",
+    "typescript",
+    "tailwindcss",
+    "winget",
+    "windows",
+    "app-catalog",
+    "neon-postgres",
+    "pwa"
+  ],
   "private": true,
   "scripts": {
     "dev": "next dev",
